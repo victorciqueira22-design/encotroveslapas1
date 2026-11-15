@@ -1,0 +1,1073 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14171f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="leaflet.css">
+<title>Encomendas</title>
+<style>
+/* Layout: abas fixas no rodapé (Agenda, Pendências, Mapa, Clientes, Ajustes). Neutro e legível; cor só para dizer o estado:
+   azul = a entregar, laranja = falta pagar, verde = concluído. Sem fontes externas. */
+:root {
+  --bg: #f3f4f6;
+  --surface: #ffffff;
+  --fg: #14171f;
+  --muted: #626a78;
+  --line: #e1e4ea;
+  --ink: #14171f;
+  --ink-fg: #ffffff;
+  --blue: #2563eb;
+  --blue-soft: #e4ecff;
+  --owe: #c2410c;
+  --owe-soft: #ffeadb;
+  --ok: #15803d;
+  --ok-soft: #dcf5e4;
+  --late: #b91c1c;
+  --late-soft: #fde2e2;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1116; --surface: #171b22; --fg: #e8ebf1; --muted: #99a1b0; --line: #272c36;
+    --ink: #e8ebf1; --ink-fg: #0e1116; --blue: #6ea0ff; --blue-soft: #1a2a4b; --owe: #ff9a66; --owe-soft: #3b2417;
+    --ok: #54cf8a; --ok-soft: #133424; --late: #ff8a8a; --late-soft: #3d1c1c;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font: 16px/1.4 var(--font);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: max(12px, env(safe-area-inset-top, 0px));
+  padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+}
+.wrap { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+h1 { font-size: 1.4rem; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 1.05rem; margin: 0; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.row { display: flex; gap: 10px; align-items: center; }
+.row.wrap-row { flex-wrap: wrap; }
+.grow { flex: 1; min-width: 0; }
+a { color: var(--blue); }
+
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 10px 14px; min-height: 46px; font-weight: 600; }
+.btn.primary { background: var(--ink); color: var(--ink-fg); border-color: var(--ink); }
+.btn.danger { color: var(--late); border-color: var(--late); }
+.btn.ghost { background: transparent; }
+.btn.armed { background: var(--late); color: #fff; border-color: var(--late); }
+.mini { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 999px; padding: 6px 12px; min-height: 36px; font-size: 0.88rem; font-weight: 600; text-decoration: none; }
+.mini.wa { border-color: #1fa855; color: #12803f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .mini.wa { color: #5ad98a; border-color: #2b8f55; } }
+.mini.armed { background: var(--late); color: #fff; border-color: var(--late); }
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label, .lbl { font-size: 0.82rem; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }
+input[type=text], input[type=search], input[type=date], input[type=tel], textarea {
+  width: 100%; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 11px 12px; min-height: 46px;
+}
+textarea { resize: vertical; min-height: 72px; }
+.sect { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; border-top: 1px solid var(--line); }
+
+/* Resumo no topo */
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat-btn { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.stat-btn .k { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.stat-btn .v { font-size: 1.3rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+.stat-btn.deliver .v { color: var(--blue); }
+.stat-btn.owe .v { color: var(--owe); }
+
+/* Calendário */
+.cal { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 12px; }
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.cal-head .title { font-weight: 700; text-transform: capitalize; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.dow { text-align: center; font-size: 0.75rem; color: var(--muted); padding: 4px 0; font-weight: 600; }
+.day { position: relative; min-height: 46px; border: 1px solid transparent; background: transparent; border-radius: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-variant-numeric: tabular-nums; padding: 2px 0; }
+.day.empty { visibility: hidden; }
+.day.today { border-color: var(--ink); }
+.day.sel { background: var(--ink); color: var(--ink-fg); }
+.dots { display: flex; gap: 3px; height: 9px; align-items: center; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); display: inline-block; }
+.dot.deliver { background: var(--blue); }
+.dot.owe { background: #f97316; }
+.dot.done { background: #22c55e; }
+.count { font-size: 0.62rem; line-height: 1; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 0.78rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Lista do dia */
+.summary { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.9rem; color: var(--muted); }
+.summary b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.quick { display: flex; gap: 8px; }
+.cards { display: flex; flex-direction: column; gap: 10px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.card-top { display: flex; gap: 12px; align-items: flex-start; }
+.thumb { width: 64px; height: 64px; border-radius: 12px; object-fit: cover; border: 1px solid var(--line); background: var(--bg); flex: none; }
+.card .name { font-weight: 700; font-size: 1.05rem; overflow-wrap: anywhere; }
+.card .desc { overflow-wrap: anywhere; white-space: pre-wrap; }
+.card .val { font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.val.owe-text { color: var(--owe); font-size: 1.15rem; }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.pill { font-size: 0.78rem; font-weight: 700; border-radius: 999px; padding: 3px 10px; }
+.pill.deliver { background: var(--blue-soft); color: var(--blue); }
+.pill.owe { background: var(--owe-soft); color: var(--owe); }
+.pill.late { background: var(--late-soft); color: var(--late); }
+.pill.done { background: var(--ok-soft); color: var(--ok); }
+.card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.chk { display: flex; align-items: center; gap: 10px; border: 1.5px solid var(--line); background: var(--surface); border-radius: 12px; padding: 10px 12px; min-height: 50px; font-weight: 700; }
+.chk .box { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--muted); display: grid; place-items: center; flex: none; }
+.chk[aria-pressed=true] .box::after { content: ""; width: 6px; height: 11px; border: solid #fff; border-width: 0 2.5px 2.5px 0; transform: rotate(45deg) translate(-1px, -1px); }
+.chk.deliver[aria-pressed=true] { background: var(--blue-soft); border-color: var(--blue); }
+.chk.deliver[aria-pressed=true] .box { background: var(--blue); border-color: var(--blue); }
+.chk.pay[aria-pressed=true] { background: var(--ok-soft); border-color: var(--ok); }
+.chk.pay[aria-pressed=true] .box { background: var(--ok); border-color: var(--ok); }
+.link { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; background: none; border: 0; padding: 6px 0; min-height: 36px; font-weight: 600; }
+.empty-note { text-align: center; padding: 24px 12px; color: var(--muted); border: 1px dashed var(--line); border-radius: 16px; }
+
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 8px 14px; min-height: 40px; font-weight: 600; }
+.chip[aria-pressed=true] { background: var(--ink); color: var(--ink-fg); border-color: var(--ink); }
+
+/* Quem deve */
+.rows { display: flex; flex-direction: column; }
+.prow { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.prow .rowlink { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 4px 0; overflow-wrap: anywhere; }
+.prow .v { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+
+/* Mapa */
+.map { height: min(60vh, 520px); border-radius: 16px; border: 1px solid var(--line); overflow: hidden; position: relative; z-index: 0; background: var(--surface); }
+.pin { width: 22px; height: 22px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.5); background: var(--blue); }
+.pin.owe { background: #f97316; }
+.pin.done { background: #22c55e; }
+.pin.sel { background: #111827; }
+.pop { display: flex; flex-direction: column; gap: 6px; min-width: 170px; color: #14171f; }
+.pop .acts { margin-top: 4px; }
+.leaflet-popup-content { margin: 12px; }
+.overlay { position: fixed; inset: 0; z-index: 25; background: var(--bg); display: flex; flex-direction: column; gap: 10px; padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.overlay .map { flex: 1; height: auto; }
+
+/* Abas */
+.tabs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); display: flex; justify-content: center; padding-bottom: env(safe-area-inset-bottom, 0px); z-index: 5; }
+.tabs-in { display: flex; width: 100%; max-width: 640px; }
+.tab { flex: 1; border: 0; background: transparent; padding: 8px 2px 8px; min-height: 58px; font-size: 0.72rem; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-weight: 600; }
+.tab[aria-current=page] { color: var(--fg); }
+.tab[aria-current=page] svg { stroke-width: 2.4; }
+.tab .badge { position: absolute; transform: translate(14px, -4px); background: var(--owe); color: #fff; border-radius: 999px; font-size: 0.65rem; min-width: 16px; height: 16px; line-height: 16px; padding: 0 4px; }
+.tab .ic { position: relative; display: inline-flex; }
+.fab { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(74px + env(safe-area-inset-bottom, 0px)); height: 54px; border-radius: 27px; padding: 0 20px 0 16px; border: 0; background: var(--ink); color: var(--ink-fg); font-weight: 700; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.3); z-index: 6; }
+.fab .plus { font-size: 1.6rem; line-height: 1; margin-top: -2px; }
+
+/* Folha de edição */
+.back { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
+.sheet { background: var(--bg); width: 100%; max-width: 640px; max-height: 92vh; overflow-y: auto; border-radius: 20px 20px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px; }
+.photo-prev { max-width: 100%; max-height: 220px; border-radius: 12px; border: 1px solid var(--line); align-self: flex-start; }
+.light { position: fixed; inset: 0; background: rgba(0,0,0,.88); z-index: 30; display: grid; place-items: center; padding: 12px; }
+.light img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(136px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--ink-fg); padding: 10px 16px; border-radius: 12px; z-index: 40; max-width: 90vw; font-size: 0.9rem; }
+.box-info { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.stat { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: no-preference) { .sheet { animation: up .18s ease-out; } @keyframes up { from { transform: translateY(24px); opacity: .6; } } }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<button class="fab" id="fab" aria-label="Nova encomenda"><span class="plus" aria-hidden="true">+</span>Nova</button>
+<nav class="tabs" aria-label="Seções"><div class="tabs-in" id="tabs"></div></nav>
+<datalist id="clientlist"></datalist>
+<script src="leaflet.js"></script>
+<script>
+"use strict";
+/* ============ Utilidades ============ */
+const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const HAS_MAP = typeof L !== "undefined";
+
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === false || v == null) continue;
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat()) {
+    if (k == null || k === false) continue;
+    e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  }
+  return e;
+}
+const ICONS = {
+  cal: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  list: '<path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
+  pin: '<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6M16 4.8a3.5 3.5 0 0 1 0 6.4M18 14.4c2.2.7 3.5 2.6 3.5 5.6"/>',
+  cfg: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'
+};
+function icon(name) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: "24", height: "24", fill: "none", stroke: "currentColor", "stroke-width": "1.8", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) s.setAttribute(k, v);
+  s.innerHTML = ICONS[name];
+  return s;
+}
+const pad = (n) => String(n).padStart(2, "0");
+const ymd = (d) => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+const parseYmd = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const norm = (s) => (s || "").trim().toLowerCase();
+const dm = (s) => s.slice(8, 10) + "/" + s.slice(5, 7);
+function longDate(s) {
+  const t = ymd(new Date());
+  const txt = parseYmd(s).toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+  return s === t ? "Hoje, " + txt : txt;
+}
+function shortDate(s) { return parseYmd(s).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" }); }
+function parseMoney(v) {
+  const t = String(v || "").trim().replace(/[^\d,.\-]/g, "");
+  if (!t) return 0;
+  const n = t.includes(",") ? parseFloat(t.replace(/\./g, "").replace(",", ".")) : parseFloat(t);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+let toastTimer = null;
+function toast(msg) {
+  document.querySelectorAll(".toast").forEach((n) => n.remove());
+  const t = el("div", { class: "toast", role: "status", text: msg });
+  document.body.append(t);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.remove(), 3000);
+}
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* segue sem */ } }
+const sum = (list) => list.reduce((s, o) => s + (o.value || 0), 0);
+
+/* Coordenadas coladas do Organic Maps, do Google Maps ou de um link */
+function parseCoords(text) {
+  const m = String(text || "").match(/(-?\d{1,2}\.\d+)\s*[,;\s]\s*(-?\d{1,3}\.\d+)/);
+  if (!m) return null;
+  const lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return { lat, lon };
+}
+/* WhatsApp: abre a conversa já com a mensagem escrita */
+function waUrl(phone, text) {
+  let d = String(phone || "").replace(/\D/g, "").replace(/^0+/, "");
+  if (d && d.length <= 11) d = "55" + d;
+  return "https://wa.me/" + d + "?text=" + encodeURIComponent(text);
+}
+const firstName = (n) => (n || "").trim().split(/\s+/)[0];
+const phoneOf = (name) => { const c = findClient(name); return c ? c.phone : ""; };
+const msgAvisar = (o) => "Olá" + (o.client ? ", " + firstName(o.client) : "") + "! Sua encomenda (" + (o.desc || "pedido") + ") está pronta.";
+const msgCobrar = (o) => "Olá" + (o.client ? ", " + firstName(o.client) : "") + "! Passando para lembrar do pagamento da encomenda (" + (o.desc || "pedido") + ")" + (o.value ? " no valor de " + brl.format(o.value) : "") + ". Obrigado!";
+function msgCobrarVarias(name, list) {
+  const lines = list.map((o) => "- " + (o.desc || "pedido") + " (" + dm(o.date) + ")" + (o.value ? ": " + brl.format(o.value) : ""));
+  const total = sum(list);
+  return "Olá" + (name ? ", " + firstName(name) : "") + "! Passando para lembrar dos pagamentos pendentes:\n" + lines.join("\n") + (total ? "\nTotal: " + brl.format(total) + "." : "") + "\nObrigado!";
+}
+
+/* ============ Agenda de contatos do celular ============ */
+/* O navegador abre a lista de contatos do próprio aparelho; o app só recebe os contatos que você marcar. */
+const HAS_CONTACTS = "contacts" in navigator && "ContactsManager" in window;
+async function pickContacts(multiple) {
+  try {
+    const r = await navigator.contacts.select(["name", "tel"], { multiple: !!multiple });
+    return r.map((c) => ({ name: ((c.name && c.name[0]) || "").trim(), phone: ((c.tel && c.tel[0]) || "").trim() })).filter((c) => c.name || c.phone);
+  } catch (e) {
+    if (!e || e.name !== "AbortError") toast("Não consegui abrir a agenda do celular.");
+    return [];
+  }
+}
+function contactButton(onPick) {
+  return el("button", { class: "btn", type: "button", text: "Escolher da agenda do celular", onclick: async () => {
+    if (!HAS_CONTACTS) { toast("Este navegador não acessa a agenda. Use o Chrome no Android, ou digite o número."); return; }
+    const list = await pickContacts(false);
+    if (list[0]) onPick(list[0]);
+  } });
+}
+async function importContacts() {
+  if (!HAS_CONTACTS) { toast("Este navegador não acessa a agenda. Use o Chrome no Android, ou digite o número."); return; }
+  const list = await pickContacts(true);
+  let added = 0, updated = 0;
+  for (const c of list) {
+    if (!c.name) continue;
+    const cur = findClient(c.name);
+    if (!cur) { await saveClient({ id: uid(), name: c.name, phone: c.phone, addr: "", notes: "" }); added++; }
+    else if (c.phone && !cur.phone) { await saveClient(Object.assign({}, cur, { phone: c.phone })); updated++; }
+  }
+  render();
+  toast(list.length ? added + " novos e " + updated + " atualizados" : "Nenhum contato escolhido");
+}
+
+/* ============ Banco local (IndexedDB) ============ */
+let idb = null;
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open("encomendas", 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore("orders", { keyPath: "id" });
+      d.createObjectStore("clients", { keyPath: "id" });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+function dbTx(store, mode, fn) {
+  return new Promise((res, rej) => {
+    if (!idb) { res(undefined); return; }
+    const t = idb.transaction(store, mode);
+    const out = fn(t.objectStore(store));
+    t.oncomplete = () => res(out ? out.result : undefined);
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  });
+}
+const dbAll = (s) => dbTx(s, "readonly", (o) => o.getAll());
+const dbPut = (s, v) => dbTx(s, "readwrite", (o) => o.put(v));
+const dbDel = (s, id) => dbTx(s, "readwrite", (o) => o.delete(id));
+
+/* ============ Estado ============ */
+const S = {
+  orders: [], clients: [],
+  tab: "cal", sel: ymd(new Date()), y: new Date().getFullYear(), m: new Date().getMonth(),
+  pmode: "owe", clientQuery: "", dbOk: true,
+  map: null, mapView: null, mapFilter: "pend", refit: true
+};
+
+async function saveOrder(o) {
+  o.updatedAt = Date.now();
+  const i = S.orders.findIndex((x) => x.id === o.id);
+  if (i >= 0) S.orders[i] = o; else S.orders.push(o);
+  try { await dbPut("orders", o); } catch (e) { toast("Não foi possível salvar. Tente de novo."); }
+}
+async function patchOrder(o, p) { await saveOrder(Object.assign({}, o, p)); render(); }
+async function saveClient(c) {
+  c.updatedAt = Date.now();
+  const i = S.clients.findIndex((x) => x.id === c.id);
+  if (i >= 0) S.clients[i] = c; else S.clients.push(c);
+  try { await dbPut("clients", c); } catch (e) { toast("Não foi possível salvar o cliente."); }
+  refreshClientList();
+}
+function refreshClientList() {
+  document.getElementById("clientlist").replaceChildren(...S.clients.map((c) => el("option", { value: c.name })));
+}
+const findClient = (name) => name ? S.clients.find((c) => norm(c.name) === norm(name)) : undefined;
+
+/* ============ Calendário ============ */
+function ordersByDate() {
+  const map = {};
+  for (const o of S.orders) (map[o.date] = map[o.date] || []).push(o);
+  return map;
+}
+function dayStatus(list) {
+  if (!list || !list.length) return "";
+  if (list.some((o) => !o.delivered)) return "deliver";
+  if (list.some((o) => !o.paid)) return "owe";
+  return "done";
+}
+function calendarView() {
+  const map = ordersByDate();
+  const first = new Date(S.y, S.m, 1);
+  const dim = new Date(S.y, S.m + 1, 0).getDate();
+  const todayStr = ymd(new Date());
+  const cells = [];
+  for (let i = 0; i < first.getDay(); i++) cells.push(el("div", { class: "day empty" }));
+  for (let d = 1; d <= dim; d++) {
+    const key = S.y + "-" + pad(S.m + 1) + "-" + pad(d);
+    const list = map[key] || [];
+    const st = dayStatus(list);
+    cells.push(el("button", {
+      class: "day" + (key === S.sel ? " sel" : "") + (key === todayStr ? " today" : ""),
+      "aria-label": longDate(key) + (list.length ? ", " + list.length + " encomenda(s)" : ""),
+      "aria-pressed": key === S.sel ? "true" : "false",
+      onclick: () => { S.sel = key; render(); }
+    },
+      el("span", { text: String(d) }),
+      el("span", { class: "dots" }, st ? [el("span", { class: "dot " + st }), el("span", { class: "count", text: String(list.length) })] : null)
+    ));
+  }
+  const step = (n) => { const d = new Date(S.y, S.m + n, 1); S.y = d.getFullYear(); S.m = d.getMonth(); render(); };
+  const goToday = () => { const t = new Date(); S.sel = ymd(t); S.y = t.getFullYear(); S.m = t.getMonth(); render(); };
+  return el("section", { class: "cal", "aria-label": "Calendário" },
+    el("div", { class: "cal-head" },
+      el("button", { class: "btn ghost", "aria-label": "Mês anterior", onclick: () => step(-1), text: "‹" }),
+      el("button", { class: "link title", onclick: goToday, "aria-label": "Ir para hoje", text: MESES[S.m] + " " + S.y }),
+      el("button", { class: "btn ghost", "aria-label": "Próximo mês", onclick: () => step(1), text: "›" })
+    ),
+    el("div", { class: "cal-grid" },
+      ["D", "S", "T", "Q", "Q", "S", "S"].map((x) => el("div", { class: "dow", text: x })), cells),
+    el("div", { class: "legend" },
+      el("span", {}, el("i", { class: "dot deliver" }), "a entregar"),
+      el("span", {}, el("i", { class: "dot owe" }), "falta pagar"),
+      el("span", {}, el("i", { class: "dot done" }), "concluído"))
+  );
+}
+
+/* ============ Cartão de encomenda ============ */
+function toggle(label, on, kind, fn) {
+  return el("button", { class: "chk " + kind, "aria-pressed": on ? "true" : "false", onclick: fn },
+    el("span", { class: "box" }), label);
+}
+function geoUrl(o) {
+  const label = encodeURIComponent((o.client || "Encomenda") + (o.addr ? " - " + o.addr : ""));
+  return "geo:" + o.lat + "," + o.lon + "?q=" + o.lat + "," + o.lon + "(" + label + ")";
+}
+const hasGeo = (o) => typeof o.lat === "number" && typeof o.lon === "number";
+function statusPills(o) {
+  const pills = [];
+  const today = ymd(new Date());
+  if (!o.delivered) pills.push(el("span", { class: "pill " + (o.date < today ? "late" : "deliver"), text: o.date < today ? "Atrasada" : "A entregar" }));
+  if (!o.paid) pills.push(el("span", { class: "pill owe", text: "Falta pagar" }));
+  if (o.delivered && o.paid) pills.push(el("span", { class: "pill done", text: "Concluída" }));
+  return el("div", { class: "pills" }, pills);
+}
+function card(o, opts) {
+  opts = opts || {};
+  const left = o.photo ? el("img", { class: "thumb", src: o.photo, alt: "Foto da encomenda, toque para ampliar", onclick: () => lightbox(o.photo) }) : null;
+  const ph = phoneOf(o.client);
+  const acts = [
+    el("button", { class: "mini", onclick: () => openOrder(o), text: "Editar" }),
+    el("a", { class: "mini wa", href: waUrl(ph, msgAvisar(o)), target: "_blank", rel: "noopener", text: "WhatsApp: avisar" })
+  ];
+  if (!o.paid) acts.push(el("a", { class: "mini wa", href: waUrl(ph, msgCobrar(o)), target: "_blank", rel: "noopener", text: "Cobrar" }));
+  if (hasGeo(o)) acts.push(el("a", { class: "mini", href: geoUrl(o), text: "Organic Maps" }));
+  else if (o.addr) acts.push(el("a", { class: "mini", href: "geo:0,0?q=" + encodeURIComponent(o.addr), text: "Buscar no mapa" }));
+  return el("article", { class: "card" },
+    el("div", { class: "card-top" },
+      left,
+      el("div", { class: "grow" },
+        opts.showDate ? el("div", { class: "small muted", text: shortDate(o.date) }) : null,
+        el("div", { class: "name", text: o.client || "(sem cliente)" }),
+        o.desc ? el("div", { class: "desc", text: o.desc }) : null,
+        o.addr ? el("div", { class: "small muted", text: o.addr }) : null
+      ),
+      o.value ? el("div", { class: "val", text: brl.format(o.value) }) : null
+    ),
+    statusPills(o),
+    el("div", { class: "card-actions" },
+      toggle("Entregue", o.delivered, "deliver", () => patchOrder(o, { delivered: !o.delivered })),
+      toggle("Pago", o.paid, "pay", () => patchOrder(o, { paid: !o.paid }))
+    ),
+    el("div", { class: "acts" }, acts)
+  );
+}
+function lightbox(src) {
+  const box = el("div", { class: "light", role: "dialog", "aria-label": "Foto", onclick: () => box.remove() }, el("img", { src, alt: "Foto da encomenda" }));
+  document.body.append(box);
+}
+
+/* ============ Telas ============ */
+function dayView() {
+  const list = S.orders.filter((o) => o.date === S.sel).sort((a, b) => (a.created || 0) - (b.created || 0));
+  const total = sum(list);
+  const aReceber = sum(list.filter((o) => !o.paid));
+  const aEntregar = list.filter((o) => !o.delivered).length;
+  const toDeliverAll = S.orders.filter((o) => !o.delivered).length;
+  const owedAll = sum(S.orders.filter((o) => !o.paid));
+  const input = el("input", { type: "text", id: "quick", placeholder: "Ex.: Maria - bolo de cenoura", "aria-label": "Anotar encomenda rápida", autocomplete: "off" });
+  let busy = false;
+  const add = async () => {
+    const raw = input.value.trim();
+    if (!raw || busy) return;
+    busy = true;
+    let client = "", desc = raw;
+    const m = raw.match(/^(.+?)\s*(?:\s-\s|:)\s*(.+)$/);
+    if (m) { client = m[1].trim(); desc = m[2].trim(); }
+    await saveOrder({ id: uid(), date: S.sel, client, desc, value: 0, paid: false, delivered: false, photo: "", lat: null, lon: null, addr: "", created: Date.now() });
+    if (client && !findClient(client)) await saveClient({ id: uid(), name: client, phone: "", addr: "", notes: "" });
+    render();
+    const n = document.getElementById("quick");
+    if (n) n.focus();
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+  const goPend = (mode) => () => { S.tab = "pend"; S.pmode = mode; render(); window.scrollTo(0, 0); };
+  return [
+    el("div", { class: "stats" },
+      el("button", { class: "stat-btn deliver", onclick: goPend("deliver") }, el("span", { class: "k", text: "A entregar" }), el("span", { class: "v", text: String(toDeliverAll) })),
+      el("button", { class: "stat-btn owe", onclick: goPend("owe") }, el("span", { class: "k", text: "Falta receber" }), el("span", { class: "v", text: brl.format(owedAll) }))),
+    calendarView(),
+    el("h2", { text: longDate(S.sel) }),
+    list.length ? el("div", { class: "summary" },
+      el("span", {}, el("b", { text: String(list.length) }), list.length === 1 ? " encomenda" : " encomendas"),
+      el("span", {}, "a entregar ", el("b", { text: String(aEntregar) })),
+      total ? el("span", {}, "total ", el("b", { text: brl.format(total) })) : null,
+      aReceber ? el("span", {}, "falta receber ", el("b", { text: brl.format(aReceber) })) : null
+    ) : null,
+    el("div", { class: "quick" }, input, el("button", { class: "btn primary", onclick: add, text: "Anotar" })),
+    list.length ? el("div", { class: "cards" }, list.map((o) => card(o)))
+      : el("div", { class: "empty-note", text: "Nenhuma encomenda neste dia. Escreva acima e toque em Anotar, ou use o botão Nova." })
+  ];
+}
+
+function groupByClient(list) {
+  const g = new Map();
+  for (const o of list) {
+    const key = norm(o.client) || "(sem cliente)";
+    if (!g.has(key)) g.set(key, { name: o.client || "(sem cliente)", list: [] });
+    g.get(key).list.push(o);
+  }
+  return [...g.values()];
+}
+function pendingView() {
+  const unpaid = S.orders.filter((o) => !o.paid);
+  const toDeliver = S.orders.filter((o) => !o.delivered);
+  const chip = (id, label) => el("button", { class: "chip", "aria-pressed": S.pmode === id ? "true" : "false", onclick: () => { S.pmode = id; render(); }, text: label });
+  const head = [
+    el("h1", { text: "Pendências" }),
+    el("div", { class: "chips" }, chip("owe", "Quem deve (" + groupByClient(unpaid).length + ")"), chip("deliver", "A entregar (" + toDeliver.length + ")"))
+  ];
+  if (S.pmode === "deliver") {
+    const list = toDeliver.slice().sort((a, b) => a.date.localeCompare(b.date) || (a.created || 0) - (b.created || 0));
+    return head.concat([
+      list.length ? el("div", { class: "cards" }, list.map((o) => card(o, { showDate: true }))) : el("div", { class: "empty-note", text: "Nada a entregar. Tudo entregue." })
+    ]);
+  }
+  const groups = groupByClient(unpaid).map((g) => Object.assign(g, { total: sum(g.list) }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "pt-BR"));
+  return head.concat([
+    el("div", { class: "summary" }, el("span", {}, "falta receber ", el("b", { text: brl.format(sum(unpaid)) }))),
+    groups.length ? el("div", { class: "cards" }, groups.map((g) => {
+      const ordered = g.list.slice().sort((a, b) => a.date.localeCompare(b.date));
+      const ph = phoneOf(g.name === "(sem cliente)" ? "" : g.name);
+      let armed = false;
+      const allBtn = el("button", { class: "mini", text: "Marcar tudo como pago", onclick: async () => {
+        if (!armed) { armed = true; allBtn.classList.add("armed"); allBtn.textContent = "Toque de novo para confirmar"; return; }
+        for (const o of ordered) await saveOrder(Object.assign({}, o, { paid: true }));
+        render(); toast("Tudo marcado como pago");
+      } });
+      return el("article", { class: "card" },
+        el("div", { class: "card-top" },
+          el("div", { class: "grow" },
+            el("div", { class: "name", text: g.name }),
+            el("div", { class: "small muted", text: ordered.length + (ordered.length === 1 ? " encomenda em aberto" : " encomendas em aberto") })),
+          el("div", { class: "val owe-text", text: g.total ? brl.format(g.total) : "sem valor" })),
+        el("div", { class: "rows" }, ordered.map((o) =>
+          el("div", { class: "prow" },
+            el("button", { class: "rowlink", onclick: () => openOrder(o) }, el("span", { class: "small muted", text: dm(o.date) + "  " }), o.desc || "(sem descrição)"),
+            o.value ? el("span", { class: "v", text: brl.format(o.value) }) : null,
+            el("button", { class: "mini", onclick: () => patchOrder(o, { paid: true }), text: "Pago" })))),
+        el("div", { class: "acts" },
+          el("a", { class: "mini wa", href: waUrl(ph, msgCobrarVarias(g.name === "(sem cliente)" ? "" : g.name, ordered)), target: "_blank", rel: "noopener", text: "Cobrar no WhatsApp" }),
+          allBtn));
+    })) : el("div", { class: "empty-note", text: "Ninguém deve nada. Tudo pago." })
+  ]);
+}
+
+/* ---------- Mapa ---------- */
+const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+function addTiles(map) {
+  L.tileLayer(TILE_URL, { maxZoom: 19, crossOrigin: true, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>' }).addTo(map);
+}
+function pinClass(o) { return !o.delivered ? "" : !o.paid ? "owe" : "done"; }
+function pinIcon(o) { return L.divIcon({ className: "", html: '<div class="pin ' + pinClass(o) + '"></div>', iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -12] }); }
+function destroyMap() {
+  if (S.map) {
+    try { S.mapView = { c: S.map.getCenter(), z: S.map.getZoom() }; S.map.remove(); } catch (e) { /* já removido */ }
+    S.map = null;
+  }
+}
+function mapSet() {
+  const f = S.mapFilter;
+  return S.orders.filter((o) => f === "pend" ? (!o.delivered || !o.paid) : f === "day" ? o.date === S.sel : true);
+}
+function popupFor(o) {
+  return el("div", { class: "pop" },
+    el("b", { text: o.client || "(sem cliente)" }),
+    o.desc ? el("div", { text: o.desc }) : null,
+    el("div", { class: "small", style: "color:#626a78", text: shortDate(o.date) + (o.value ? " · " + brl.format(o.value) : "") }),
+    statusPills(o),
+    el("div", { class: "acts" },
+      el("a", { class: "mini", href: geoUrl(o), text: "Organic Maps" }),
+      el("button", { class: "mini", onclick: () => openOrder(o), text: "Abrir" })));
+}
+function initMap() {
+  const box = document.getElementById("map");
+  if (!box) return;
+  const map = L.map(box);
+  S.map = map;
+  addTiles(map);
+  const pts = [];
+  for (const o of mapSet().filter(hasGeo)) {
+    L.marker([o.lat, o.lon], { icon: pinIcon(o), keyboard: true, title: o.client || "Encomenda" }).addTo(map).bindPopup(() => popupFor(o));
+    pts.push([o.lat, o.lon]);
+  }
+  if (S.mapView && !S.refit) map.setView(S.mapView.c, S.mapView.z);
+  else fitPins(map, pts);
+  S.refit = false;
+}
+function fitPins(map, pts) {
+  if (!pts) { pts = mapSet().filter(hasGeo).map((o) => [o.lat, o.lon]); }
+  if (pts.length === 1) map.setView(pts[0], 16);
+  else if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 16 });
+  else map.setView([-14.2, -51.9], 4);
+}
+function locateMe(map, onPos) {
+  if (!navigator.geolocation) { toast("Este aparelho não informa localização."); return; }
+  navigator.geolocation.getCurrentPosition(
+    (p) => onPos([p.coords.latitude, p.coords.longitude]),
+    () => toast("Não consegui pegar a localização. Verifique a permissão."),
+    { enableHighAccuracy: true, timeout: 15000 });
+}
+async function saveArea(map) {
+  if (!navigator.onLine) { toast("Conecte-se à internet para salvar a área."); return; }
+  const b = map.getBounds();
+  const z0 = Math.round(map.getZoom());
+  const urls = [];
+  for (let z = z0; z <= Math.min(z0 + 2, 17); z++) {
+    const nw = map.project(b.getNorthWest(), z).divideBy(256).floor();
+    const se = map.project(b.getSouthEast(), z).divideBy(256).floor();
+    const n = 1 << z, batch = [];
+    for (let x = nw.x; x <= se.x; x++) for (let y = nw.y; y <= se.y; y++) {
+      if (x < 0 || y < 0 || x >= n || y >= n) continue;
+      batch.push(TILE_URL.replace("{z}", z).replace("{x}", x).replace("{y}", y));
+    }
+    if (urls.length + batch.length > 200) break;
+    urls.push(...batch);
+  }
+  if (!urls.length) { toast("Área grande demais. Aproxime o mapa e tente de novo."); return; }
+  toast("Salvando " + urls.length + " pedaços do mapa…");
+  let ok = 0;
+  for (let i = 0; i < urls.length; i += 6) {
+    await Promise.all(urls.slice(i, i + 6).map((u) => fetch(u, { mode: "cors" }).then((r) => { if (r.ok) ok++; }).catch(() => {})));
+  }
+  toast(ok ? "Área salva para uso offline (" + ok + " pedaços)." : "Não consegui baixar o mapa agora.");
+}
+function mapView() {
+  const set = mapSet();
+  const noGeo = set.filter((o) => !hasGeo(o)).length;
+  const chip = (id, label) => el("button", { class: "chip", "aria-pressed": S.mapFilter === id ? "true" : "false", onclick: () => { S.mapFilter = id; S.refit = true; render(); }, text: label });
+  if (!HAS_MAP) return [el("h1", { text: "Mapa" }), el("div", { class: "empty-note", text: "O arquivo leaflet.js não foi encontrado. Ele precisa ficar na mesma pasta do app." })];
+  return [
+    el("h1", { text: "Mapa" }),
+    el("div", { class: "chips" }, chip("pend", "Pendentes"), chip("day", "Dia " + dm(S.sel)), chip("all", "Todas")),
+    el("div", { id: "map", class: "map", role: "application", "aria-label": "Mapa das encomendas" }),
+    el("div", { class: "acts" },
+      el("button", { class: "mini", onclick: () => S.map && fitPins(S.map), text: "Ver todos os pontos" }),
+      el("button", { class: "mini", onclick: () => S.map && locateMe(S.map, (ll) => { if (!S.map) return; L.circleMarker(ll, { radius: 8, color: "#fff", weight: 3, fillColor: "#2563eb", fillOpacity: 1 }).addTo(S.map); S.map.setView(ll, 16); }), text: "Minha posição" }),
+      el("button", { class: "mini", onclick: () => S.map && saveArea(S.map), text: "Salvar esta área offline" })),
+    noGeo ? el("p", { class: "small muted", style: "margin:0", text: noGeo + (noGeo === 1 ? " encomenda deste filtro está" : " encomendas deste filtro estão") + " sem ponto no mapa. Abra a encomenda e use Escolher no mapa." }) : null,
+    el("p", { class: "small muted", style: "margin:0", text: "O mapa usa o OpenStreetMap, a mesma base de dados do Organic Maps. Sem internet aparecem só as áreas já vistas ou salvas. Verde, laranja e azul seguem o estado da encomenda: concluída, falta pagar e a entregar." })
+  ];
+}
+
+/* Escolher o ponto tocando no mapa */
+function pickOnMap(start, onDone) {
+  if (!HAS_MAP) { toast("Mapa indisponível. Falta o arquivo leaflet.js."); return; }
+  let pos = start && typeof start.lat === "number" ? { lat: start.lat, lon: start.lon } : null;
+  const box = el("div", { class: "map", role: "application", "aria-label": "Mapa para escolher o ponto" });
+  const info = el("div", { class: "small muted", text: pos ? "Toque no mapa para mudar o ponto." : "Toque no mapa para marcar o ponto da entrega." });
+  const ov = el("div", { class: "overlay", role: "dialog", "aria-modal": "true" });
+  let map = null, marker = null;
+  const close = () => { try { if (map) map.remove(); } catch (e) { /* ok */ } ov.remove(); };
+  const setPos = (lat, lon) => {
+    pos = { lat, lon };
+    if (marker) marker.setLatLng([lat, lon]); else marker = L.marker([lat, lon], { icon: L.divIcon({ className: "", html: '<div class="pin sel"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }) }).addTo(map);
+    info.textContent = "Ponto marcado. Toque em outro lugar para mudar.";
+  };
+  ov.append(
+    el("div", { class: "row" }, el("h2", { class: "grow", text: "Escolher no mapa" }), el("button", { class: "btn", onclick: close, text: "Cancelar" })),
+    box, info,
+    el("div", { class: "row wrap-row" },
+      el("button", { class: "btn", onclick: () => locateMe(map, (ll) => { map.setView(ll, 17); setPos(ll[0], ll[1]); }), text: "Minha posição" }),
+      el("button", { class: "btn primary grow", onclick: () => { if (!pos) { toast("Toque no mapa para marcar o ponto."); return; } const p = pos; close(); onDone(p); }, text: "Usar este ponto" })));
+  document.body.append(ov);
+  map = L.map(box);
+  addTiles(map);
+  if (pos) { map.setView([pos.lat, pos.lon], 17); setPos(pos.lat, pos.lon); }
+  else if (S.mapView) map.setView(S.mapView.c, Math.max(S.mapView.z, 5));
+  else map.setView([-14.2, -51.9], 4);
+  map.on("click", (e) => setPos(e.latlng.lat, e.latlng.lng));
+}
+
+function clientsView() {
+  const q = norm(S.clientQuery);
+  const list = S.clients.filter((c) => !q || norm(c.name).includes(q) || norm(c.phone).includes(q) || norm(c.addr).includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const search = el("input", { type: "search", id: "cq", placeholder: "Buscar cliente", value: S.clientQuery, "aria-label": "Buscar cliente", autocomplete: "off" });
+  search.addEventListener("input", () => {
+    S.clientQuery = search.value;
+    const pos = search.selectionStart;
+    render();
+    const n = document.getElementById("cq");
+    if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) { /* ignora */ } }
+  });
+  return [
+    el("div", { class: "row" }, el("h1", { class: "grow", text: "Clientes" }), el("button", { class: "btn primary", onclick: () => openClient(null), text: "Novo cliente" })),
+    el("div", { class: "acts" }, el("button", { class: "mini", onclick: importContacts, text: "Importar da agenda do celular" })),
+    search,
+    list.length ? el("div", { class: "cards" }, list.map((c) => {
+      const mine = S.orders.filter((o) => norm(o.client) === norm(c.name));
+      const owed = sum(mine.filter((o) => !o.paid));
+      return el("article", { class: "card" },
+        el("div", { class: "card-top" },
+          el("div", { class: "grow" },
+            el("div", { class: "name", text: c.name }),
+            c.phone ? el("div", { class: "small", text: c.phone }) : null,
+            c.addr ? el("div", { class: "small muted", text: c.addr }) : null,
+            c.notes ? el("div", { class: "small", text: c.notes }) : null,
+            el("div", { class: "small muted", text: mine.length + (mine.length === 1 ? " encomenda" : " encomendas") })),
+          owed ? el("div", { class: "val owe-text", text: brl.format(owed) }) : null),
+        el("div", { class: "acts" },
+          el("button", { class: "mini", onclick: () => openClient(c), text: "Editar" }),
+          c.phone ? el("a", { class: "mini wa", href: waUrl(c.phone, ""), target: "_blank", rel: "noopener", text: "Abrir WhatsApp" }) : null,
+          c.phone ? el("a", { class: "mini", href: "tel:" + c.phone.replace(/[^\d+]/g, ""), text: "Ligar" }) : null));
+    })) : el("div", { class: "empty-note", text: S.clients.length ? "Nenhum cliente encontrado." : "Ainda não há clientes. Eles aparecem aqui quando você anota uma encomenda com nome." })
+  ];
+}
+function settingsView() {
+  const last = lsGet("lastBackup");
+  const fileIn = el("input", { type: "file", accept: "application/json,.json", id: "imp", hidden: true });
+  fileIn.addEventListener("change", () => importFile(fileIn.files[0]));
+  return [
+    el("h1", { text: "Ajustes" }),
+    el("section", { class: "box-info" },
+      el("h2", { text: "Seus dados" }),
+      el("div", { class: "stat" }, el("span", { text: "Encomendas" }), el("b", { text: String(S.orders.length) })),
+      el("div", { class: "stat" }, el("span", { text: "Clientes" }), el("b", { text: String(S.clients.length) })),
+      el("div", { class: "stat" }, el("span", { text: "Falta receber" }), el("b", { text: brl.format(sum(S.orders.filter((o) => !o.paid))) })),
+      el("p", { class: "small muted", style: "margin:0", text: "Tudo fica salvo neste aparelho e funciona sem internet. Só o mapa e o WhatsApp usam a internet quando você os abre." }),
+      !S.dbOk ? el("p", { class: "small", style: "margin:0;color:var(--late)", text: "Atenção: o armazenamento do navegador não está disponível (janela anônima?). Os dados somem ao fechar." }) : null
+    ),
+    el("section", { class: "box-info" },
+      el("h2", { text: "Receber do WhatsApp" }),
+      el("p", { class: "small muted", style: "margin:0", text: "Com o app instalado no Android, segure uma mensagem do cliente no WhatsApp, toque em Compartilhar e escolha Encomendas. O texto já entra numa nova encomenda. Se a mensagem tiver coordenadas, o ponto no mapa é marcado." })
+    ),
+    el("section", { class: "box-info" },
+      el("h2", { text: "Planilha para o Excel" }),
+      el("p", { class: "small muted", style: "margin:0", text: "Gera uma planilha com data, cliente, pedido, valor, entregue e pago. Abre no Excel e no Google Planilhas." }),
+      el("div", { class: "row wrap-row" },
+        el("button", { class: "btn primary", onclick: exportCsv, text: "Salvar planilha" }),
+        navigator.canShare ? el("button", { class: "btn", onclick: shareCsv, text: "Enviar planilha" }) : null)
+    ),
+    el("section", { class: "box-info" },
+      el("h2", { text: "Backup e passar para outro aparelho" }),
+      el("p", { class: "small muted", style: "margin:0", text: last ? "Último backup: " + new Date(Number(last)).toLocaleString("pt-BR") : "Você ainda não fez nenhum backup. Faça de vez em quando e guarde o arquivo no Drive, e-mail ou WhatsApp." }),
+      el("div", { class: "row wrap-row" },
+        el("button", { class: "btn primary", onclick: exportData, text: "Salvar backup" }),
+        navigator.canShare ? el("button", { class: "btn", onclick: shareData, text: "Compartilhar backup" }) : null,
+        el("button", { class: "btn", onclick: () => fileIn.click(), text: "Restaurar backup" }),
+        fileIn
+      ),
+      el("p", { class: "small muted", style: "margin:0", text: "Para usar no celular e no computador: salve o backup em um e restaure no outro. O que for mais novo prevalece. Encomendas apagadas não são apagadas no outro aparelho." })
+    ),
+    el("section", { class: "box-info" },
+      el("h2", { text: "Instalar como aplicativo" }),
+      el("p", { class: "small muted", style: "margin:0", text: "No Chrome do Android: menu ⋮ → Instalar aplicativo. No iPhone (Safari): Compartilhar → Adicionar à Tela de Início. Depois de instalado, abre sem internet." }),
+      el("button", { class: "btn", onclick: askPersist, text: "Proteger dados contra limpeza automática" })
+    )
+  ];
+}
+
+/* ============ Folhas (editar) ============ */
+function openSheet(children) {
+  closeSheet();
+  const back = el("div", { class: "back", id: "sheet-back", onclick: (e) => { if (e.target === back) closeSheet(); } },
+    el("div", { class: "sheet", role: "dialog", "aria-modal": "true" }, children));
+  document.body.append(back);
+  const first = back.querySelector("input, textarea");
+  if (first) first.focus();
+}
+function closeSheet() { const b = document.getElementById("sheet-back"); if (b) b.remove(); }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeSheet(); document.querySelectorAll(".light").forEach((n) => n.remove()); } });
+
+function field(label, input, id) { return el("div", { class: "field" }, el("label", { for: id, text: label }), input); }
+
+function openOrder(existing, preset) {
+  preset = preset || {};
+  const o = existing ? Object.assign({}, existing) : Object.assign({ id: uid(), date: S.sel, client: "", desc: "", value: 0, paid: false, delivered: false, photo: "", lat: null, lon: null, addr: "", created: Date.now() }, preset);
+  const iDate = el("input", { type: "date", id: "f-date", value: o.date });
+  const iClient = el("input", { type: "text", id: "f-client", value: o.client, list: "clientlist", autocomplete: "off", placeholder: "Nome do cliente" });
+  const iPhone = el("input", { type: "tel", id: "f-phone", value: phoneOf(o.client), autocomplete: "off", placeholder: "(99) 99999-9999" });
+  const iDesc = el("textarea", { id: "f-desc", placeholder: "O que foi pedido" }); iDesc.value = o.desc;
+  const iVal = el("input", { type: "text", id: "f-val", inputmode: "decimal", value: o.value ? String(o.value).replace(".", ",") : "", placeholder: "0,00" });
+  const iAddr = el("input", { type: "text", id: "f-addr", value: o.addr, placeholder: "Endereço ou ponto de referência", autocomplete: "off" });
+  const iPaste = el("input", { type: "text", id: "f-paste", placeholder: "Colar coordenadas (ex.: -7.5321, -46.0345)", autocomplete: "off" });
+  iClient.addEventListener("change", () => {
+    const c = findClient(iClient.value);
+    if (c) {
+      if (c.addr && !iAddr.value.trim()) iAddr.value = c.addr;
+      if (c.phone && !iPhone.value.trim()) iPhone.value = c.phone;
+    }
+  });
+  const geoTxt = el("div", { class: "small muted" });
+  const showGeo = () => { geoTxt.textContent = hasGeo(o) ? "Local marcado: " + o.lat.toFixed(5) + ", " + o.lon.toFixed(5) : "Local ainda não marcado no mapa."; };
+  showGeo();
+  iPaste.addEventListener("input", () => {
+    const c = parseCoords(iPaste.value);
+    if (c) { o.lat = c.lat; o.lon = c.lon; iPaste.value = ""; showGeo(); toast("Local marcado"); }
+  });
+  const pickBtn = el("button", { class: "btn", type: "button", text: "Escolher no mapa", onclick: () => pickOnMap(hasGeo(o) ? o : null, (p) => { o.lat = p.lat; o.lon = p.lon; showGeo(); }) });
+  const geoBtn = el("button", { class: "btn", type: "button", text: "Minha localização", onclick: () => {
+    geoBtn.textContent = "Buscando…";
+    locateMe(null, (ll) => { o.lat = ll[0]; o.lon = ll[1]; geoBtn.textContent = "Minha localização"; showGeo(); });
+    setTimeout(() => { if (geoBtn.textContent === "Buscando…") geoBtn.textContent = "Minha localização"; }, 16000);
+  } });
+  const clearGeo = el("button", { class: "link", type: "button", text: "Limpar local", onclick: () => { o.lat = null; o.lon = null; showGeo(); } });
+  const prevBox = el("div", { class: "row wrap-row" });
+  const showPhoto = () => {
+    prevBox.replaceChildren();
+    if (o.photo) prevBox.append(el("img", { class: "photo-prev", src: o.photo, alt: "Foto da encomenda" }),
+      el("button", { class: "link", type: "button", text: "Remover foto", onclick: () => { o.photo = ""; showPhoto(); } }));
+  };
+  showPhoto();
+  const iFile = el("input", { type: "file", accept: "image/*", id: "f-photo" });
+  iFile.addEventListener("change", async () => {
+    const f = iFile.files[0];
+    if (!f) return;
+    try { o.photo = await readPhoto(f); showPhoto(); } catch (e) { toast("Não consegui ler essa foto."); }
+    iFile.value = "";
+  });
+  const tD = toggle("Entregue", o.delivered, "deliver", () => { o.delivered = !o.delivered; tD.setAttribute("aria-pressed", o.delivered ? "true" : "false"); });
+  const tP = toggle("Pago", o.paid, "pay", () => { o.paid = !o.paid; tP.setAttribute("aria-pressed", o.paid ? "true" : "false"); });
+  tD.type = "button"; tP.type = "button";
+
+  const save = async () => {
+    o.date = iDate.value || S.sel;
+    o.client = iClient.value.trim();
+    o.desc = iDesc.value.trim();
+    o.value = parseMoney(iVal.value);
+    o.addr = iAddr.value.trim();
+    if (!o.client && !o.desc) { toast("Escreva o cliente ou o que foi pedido."); return; }
+    await saveOrder(o);
+    if (o.client) {
+      const c = findClient(o.client);
+      const phone = iPhone.value.trim();
+      if (!c) await saveClient({ id: uid(), name: o.client, phone, addr: o.addr, notes: "" });
+      else if (phone && phone !== c.phone) await saveClient(Object.assign({}, c, { phone }));
+    }
+    S.sel = o.date; const d = parseYmd(o.date); S.y = d.getFullYear(); S.m = d.getMonth();
+    if (S.tab === "cfg" || S.tab === "cli") S.tab = "cal";
+    closeSheet(); render(); toast("Salvo");
+  };
+  let armed = false;
+  const delBtn = existing ? el("button", { class: "btn danger", type: "button", text: "Excluir", onclick: async () => {
+    if (!armed) { armed = true; delBtn.classList.add("armed"); delBtn.textContent = "Toque de novo para excluir"; return; }
+    S.orders = S.orders.filter((x) => x.id !== o.id);
+    try { await dbDel("orders", o.id); } catch (e) { toast("Não foi possível excluir."); }
+    closeSheet(); render(); toast("Encomenda excluída");
+  } }) : null;
+
+  openSheet([
+    el("h2", { text: existing ? "Editar encomenda" : "Nova encomenda" }),
+    field("Data de entrega", iDate, "f-date"),
+    field("Cliente", iClient, "f-client"),
+    field("Telefone (para o WhatsApp)", iPhone, "f-phone"),
+    contactButton((c) => {
+      if (c.name) iClient.value = c.name;
+      if (c.phone) iPhone.value = c.phone;
+      const cl = findClient(c.name);
+      if (cl && cl.addr && !iAddr.value.trim()) iAddr.value = cl.addr;
+    }),
+    field("Pedido", iDesc, "f-desc"),
+    field("Valor (R$)", iVal, "f-val"),
+    el("div", { class: "field" }, el("span", { class: "lbl", text: "Foto" }), iFile, prevBox),
+    el("div", { class: "sect" },
+      field("Local da entrega", iAddr, "f-addr"),
+      el("div", { class: "row wrap-row" }, pickBtn, geoBtn, clearGeo),
+      field("Ou cole as coordenadas copiadas do Organic Maps", iPaste, "f-paste"),
+      geoTxt),
+    el("div", { class: "card-actions" }, tD, tP),
+    el("div", { class: "row wrap-row" },
+      el("button", { class: "btn primary grow", type: "button", onclick: save, text: "Salvar" }),
+      el("button", { class: "btn", type: "button", onclick: closeSheet, text: "Cancelar" }),
+      delBtn)
+  ]);
+}
+function openClient(existing) {
+  const c = existing ? Object.assign({}, existing) : { id: uid(), name: "", phone: "", addr: "", notes: "" };
+  const oldName = c.name;
+  const iName = el("input", { type: "text", id: "c-name", value: c.name, autocomplete: "off" });
+  const iPhone = el("input", { type: "tel", id: "c-phone", value: c.phone, autocomplete: "off" });
+  const iAddr = el("input", { type: "text", id: "c-addr", value: c.addr, autocomplete: "off" });
+  const iNotes = el("textarea", { id: "c-notes", placeholder: "Ex.: mora perto da praça, prefere pagar no dia" }); iNotes.value = c.notes;
+  const save = async () => {
+    c.name = iName.value.trim(); c.phone = iPhone.value.trim(); c.addr = iAddr.value.trim(); c.notes = iNotes.value.trim();
+    if (!c.name) { toast("Escreva o nome do cliente."); return; }
+    const dup = S.clients.find((x) => x.id !== c.id && norm(x.name) === norm(c.name));
+    if (dup) { toast("Já existe um cliente com esse nome."); return; }
+    await saveClient(c);
+    if (existing && oldName !== c.name) {
+      for (const ord of S.orders.filter((x) => norm(x.client) === norm(oldName))) await saveOrder(Object.assign({}, ord, { client: c.name }));
+    }
+    closeSheet(); render(); toast("Cliente salvo");
+  };
+  let armed = false;
+  const delBtn = existing ? el("button", { class: "btn danger", type: "button", text: "Excluir", onclick: async () => {
+    if (!armed) { armed = true; delBtn.classList.add("armed"); delBtn.textContent = "Toque de novo para excluir"; return; }
+    S.clients = S.clients.filter((x) => x.id !== c.id);
+    try { await dbDel("clients", c.id); } catch (e) { toast("Não foi possível excluir."); }
+    refreshClientList(); closeSheet(); render(); toast("Cliente excluído (as encomendas ficam)");
+  } }) : null;
+  openSheet([
+    el("h2", { text: existing ? "Editar cliente" : "Novo cliente" }),
+    contactButton((c) => { if (c.name && !iName.value.trim()) iName.value = c.name; if (c.phone) iPhone.value = c.phone; }),
+    field("Nome", iName, "c-name"), field("Telefone", iPhone, "c-phone"), field("Endereço", iAddr, "c-addr"), field("Anotações", iNotes, "c-notes"),
+    el("div", { class: "row wrap-row" },
+      el("button", { class: "btn primary grow", type: "button", onclick: save, text: "Salvar" }),
+      el("button", { class: "btn", type: "button", onclick: closeSheet, text: "Cancelar" }),
+      delBtn)
+  ]);
+}
+
+/* ============ Foto, planilha, backup ============ */
+function readPhoto(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const max = 900, sc = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(img.width * sc)); c.height = Math.max(1, Math.round(img.height * sc));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL("image/jpeg", 0.75));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("foto")); };
+    img.src = url;
+  });
+}
+function backupBlob() {
+  const data = { app: "encomendas", version: 1, exportedAt: Date.now(), orders: S.orders, clients: S.clients };
+  return new Blob([JSON.stringify(data)], { type: "application/json" });
+}
+const backupName = () => "encomendas-" + ymd(new Date()) + ".json";
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = el("a", { href: url, download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+function exportData() { saveBlob(backupBlob(), backupName()); lsSet("lastBackup", String(Date.now())); render(); toast("Backup salvo"); }
+async function shareData() {
+  try {
+    const file = new File([backupBlob()], backupName(), { type: "application/json" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: "Backup de encomendas" });
+      lsSet("lastBackup", String(Date.now())); render();
+    } else { exportData(); }
+  } catch (e) { if (e && e.name !== "AbortError") toast("Não consegui compartilhar. Use Salvar backup."); }
+}
+/* Planilha para o Excel: CSV com ponto e vírgula e BOM, abre direto em português. */
+function csvCell(v) {
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+function buildCsv() {
+  const head = ["Data", "Cliente", "Telefone", "Pedido", "Valor (R$)", "Entregue", "Pago", "Endereço", "Latitude", "Longitude"];
+  const rows = S.orders.slice().sort((a, b) => a.date.localeCompare(b.date) || (a.created || 0) - (b.created || 0)).map((o) => {
+    const d = o.date.split("-");
+    return [d[2] + "/" + d[1] + "/" + d[0], o.client, phoneOf(o.client), o.desc,
+      (o.value || 0).toFixed(2).replace(".", ","), o.delivered ? "Sim" : "Não", o.paid ? "Sim" : "Não",
+      o.addr, hasGeo(o) ? String(o.lat).replace(".", ",") : "", hasGeo(o) ? String(o.lon).replace(".", ",") : ""];
+  });
+  return "﻿" + [head].concat(rows).map((r) => r.map(csvCell).join(";")).join("\r\n");
+}
+const csvName = () => "encomendas-" + ymd(new Date()) + ".csv";
+const csvBlob = () => new Blob([buildCsv()], { type: "text/csv;charset=utf-8" });
+function exportCsv() {
+  if (!S.orders.length) { toast("Ainda não há encomendas para exportar."); return; }
+  saveBlob(csvBlob(), csvName());
+  toast("Planilha salva. Abra no Excel.");
+}
+async function shareCsv() {
+  if (!S.orders.length) { toast("Ainda não há encomendas para exportar."); return; }
+  try {
+    const file = new File([csvBlob()], csvName(), { type: "text/csv" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file], title: "Planilha de encomendas" });
+    else exportCsv();
+  } catch (e) { if (e && e.name !== "AbortError") toast("Não consegui compartilhar. Use Salvar planilha."); }
+}
+async function importFile(file) {
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    if (!data || !Array.isArray(data.orders) || !Array.isArray(data.clients)) throw new Error("formato");
+    let nO = 0, nC = 0;
+    for (const o of data.orders) {
+      if (!o || typeof o.id !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(o.date || "")) continue;
+      const cur = S.orders.find((x) => x.id === o.id);
+      if (!cur || (o.updatedAt || 0) > (cur.updatedAt || 0)) {
+        const rec = { id: o.id, date: o.date, client: String(o.client || ""), desc: String(o.desc || ""), value: Number(o.value) || 0, paid: !!o.paid, delivered: !!o.delivered,
+          photo: typeof o.photo === "string" && o.photo.startsWith("data:image/") ? o.photo : "", lat: typeof o.lat === "number" ? o.lat : null, lon: typeof o.lon === "number" ? o.lon : null,
+          addr: String(o.addr || ""), created: o.created || Date.now(), updatedAt: o.updatedAt || 0 };
+        const i = S.orders.findIndex((x) => x.id === o.id);
+        if (i >= 0) S.orders[i] = rec; else S.orders.push(rec);
+        await dbPut("orders", rec); nO++;
+      }
+    }
+    for (const c of data.clients) {
+      if (!c || typeof c.id !== "string" || !c.name) continue;
+      const cur = S.clients.find((x) => x.id === c.id);
+      if (!cur || (c.updatedAt || 0) > (cur.updatedAt || 0)) {
+        const rec = { id: c.id, name: String(c.name), phone: String(c.phone || ""), addr: String(c.addr || ""), notes: String(c.notes || ""), updatedAt: c.updatedAt || 0 };
+        const i = S.clients.findIndex((x) => x.id === c.id);
+        if (i >= 0) S.clients[i] = rec; else S.clients.push(rec);
+        await dbPut("clients", rec); nC++;
+      }
+    }
+    refreshClientList(); render(); toast("Restaurado: " + nO + " encomendas e " + nC + " clientes");
+  } catch (e) { toast("Esse arquivo não parece um backup deste app."); }
+}
+async function askPersist() {
+  try {
+    if (navigator.storage && navigator.storage.persist) {
+      const ok = await navigator.storage.persist();
+      toast(ok ? "Dados protegidos" : "O navegador não liberou a proteção. Faça backups.");
+    } else toast("Este navegador não oferece essa proteção. Faça backups.");
+  } catch (e) { toast("Não foi possível pedir a proteção."); }
+}
+
+/* ============ Render principal ============ */
+const TABS = [["cal", "cal", "Agenda"], ["pend", "list", "Pendências"], ["map", "pin", "Mapa"], ["cli", "users", "Clientes"], ["cfg", "cfg", "Ajustes"]];
+function render() {
+  destroyMap();
+  const app = document.getElementById("app");
+  const view = S.tab === "cal" ? dayView() : S.tab === "pend" ? pendingView() : S.tab === "map" ? mapView() : S.tab === "cli" ? clientsView() : settingsView();
+  app.replaceChildren(...view.filter(Boolean));
+  const nOwe = S.orders.filter((o) => !o.paid || !o.delivered).length;
+  document.getElementById("tabs").replaceChildren(...TABS.map(([id, ic, label]) =>
+    el("button", { class: "tab", "aria-current": S.tab === id ? "page" : null, onclick: () => { if (id === "map") S.refit = true; S.tab = id; render(); window.scrollTo(0, 0); } },
+      el("span", { class: "ic" }, icon(ic), id === "pend" && nOwe ? el("span", { class: "badge", text: String(nOwe > 99 ? "99+" : nOwe), "aria-label": nOwe + " pendências" }) : null), label)));
+  document.getElementById("fab").hidden = S.tab === "cfg" || S.tab === "map";
+  if (S.tab === "map" && HAS_MAP) initMap();
+}
+document.getElementById("fab").addEventListener("click", () => openOrder(null));
+
+/* ============ Início ============ */
+(async function start() {
+  try {
+    idb = await openDB();
+    S.orders = await dbAll("orders") || [];
+    S.clients = await dbAll("clients") || [];
+  } catch (e) { S.dbOk = false; idb = null; }
+  refreshClientList();
+  render();
+  if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register("sw.js").catch(() => { /* sem offline automático, o app segue funcionando */ });
+  }
+  /* Texto compartilhado do WhatsApp (ou de outro app) vira uma nova encomenda */
+  try {
+    const sp = new URLSearchParams(location.search);
+    const shared = [sp.get("title"), sp.get("text"), sp.get("url")].filter(Boolean).join("\n").trim();
+    if (shared) {
+      const c = parseCoords(shared);
+      openOrder(null, Object.assign({ desc: shared.slice(0, 500) }, c ? { lat: c.lat, lon: c.lon } : {}));
+      history.replaceState(null, "", location.pathname);
+    }
+  } catch (e) { /* sem texto compartilhado */ }
+})();
+</script>
+</body>
+</html>
